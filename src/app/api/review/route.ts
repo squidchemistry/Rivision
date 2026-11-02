@@ -6,6 +6,9 @@ import { requireUser } from '@/lib/auth';
 import { ApiError, errorResponse, readJson } from '@/lib/http';
 import { enforceRateLimit } from '@/lib/rate-limit';
 
+// AI calls can take up to a minute; Vercel cuts functions off at this many seconds
+export const maxDuration = 60;
+
 const MAX_ANSWER_CHARS = 20_000;
 
 type AnswerInput = { questionId: number; answer: string };

@@ -7,6 +7,9 @@ import { ApiError, errorResponse } from '@/lib/http';
 import { enforceRateLimit } from '@/lib/rate-limit';
 import { releaseQuota, reserveQuota, type Reservation } from '@/lib/usage';
 
+// AI calls can take up to a minute; Vercel cuts functions off at this many seconds
+export const maxDuration = 60;
+
 const MAX_COUNT = 20;
 const MAX_CONTENT_CHARS = 200_000;
 

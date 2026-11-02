@@ -104,13 +104,24 @@ Optional sample content: sign up, set `SEED_USER_EMAIL` to that account's email,
 
 ## Deploying
 
-Works on any Node host; on Vercel:
+### Vercel
 
-1. Create a Postgres database (Prisma Postgres, Neon or Supabase). Use the **pooled** URL for `DATABASE_URL` and the **direct** URL for `DIRECT_URL`.
-2. Set all variables from `.env.example` in the host. `NEXTAUTH_URL` must be the public URL.
-3. Run `npm run db:deploy` against the production database (once per release with new migrations, e.g. as a release step).
-4. Build with `npm run build` and start with `npm start`.
-5. Run `npm run admin:create` once with `ADMIN_EMAIL`/`ADMIN_PASSWORD` set, then remove `ADMIN_PASSWORD`.
+On Vercel the build runs `vercel-build` (`prisma generate && prisma migrate deploy && next build`), so every deploy applies pending migrations before going live. AI routes allow up to 60 s.
+
+1. **Import the repo** in Vercel (Add New → Project). Framework: Next.js; leave build settings at their defaults.
+2. **Add a database**: Project → Storage → Create Database → Neon (or Prisma Postgres) → connect it to all environments. This adds `DATABASE_URL` (pooled) automatically.
+3. **Add environment variables** (Project → Settings → Environment Variables):
+   - `DIRECT_URL`: the database's unpooled/direct URL (Neon adds it as `DATABASE_URL_UNPOOLED`; copy that value)
+   - `NEXTAUTH_SECRET`: output of `openssl rand -base64 32`
+   - `NEXTAUTH_URL`: the production URL, e.g. `https://your-app.vercel.app`
+   - `GROQ_API_KEY`, `APP_TIMEZONE`, and the `NEXT_PUBLIC_PAYMENT_*` values
+4. **Deploy** (Deployments → Redeploy after adding variables).
+5. **Check** `https://your-app.vercel.app/api/health`. It should return `"ok": true` and `"database": "ok"`; `not_migrated` means the migration step didn't run, `unreachable` means a wrong database URL.
+6. **Create the admin** from your machine with the production URLs in `.env`: `npm run admin:create` (with `ADMIN_EMAIL`/`ADMIN_PASSWORD` set), then remove `ADMIN_PASSWORD`.
+
+### Other hosts
+
+Set the same variables, run `npm run db:deploy` against the production database, then `npm run build` and `npm start`.
 
 ### Scaling notes
 
