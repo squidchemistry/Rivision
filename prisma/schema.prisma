@@ -1,0 +1,158 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Topic {
+  id        Int        @id @default(autoincrement())
+  name      String
+  content   String     @default("")
+  priority  Int        @default(2) // 1=low, 2=normal, 3=high
+  createdAt DateTime   @default(now())
+  questions Question[]
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model Question {
+  id             Int       @id @default(autoincrement())
+  topicId        Int
+  topic          Topic     @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  questionText   String
+  mode           String    @default("theory") // coding, theory
+  difficulty     Int       @default(1)
+  lastReviewed   DateTime?
+  reviewInterval Int       @default(1) // days until the next review
+  nextReviewAt   DateTime  @default(now())
+  successCount   Int       @default(0)
+  failureCount   Int       @default(0)
+  createdAt      DateTime  @default(now())
+
+  @@index([topicId, mode, nextReviewAt])
+}
+
+model StudyStats {
+  id             Int       @id @default(autoincrement())
+  currentStreak  Int       @default(0)
+  longestStreak  Int       @default(0)
+  lastStudyDate  DateTime?
+  totalRevisions Int       @default(0)
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RevisionHistory {
+  id                Int      @id @default(autoincrement())
+  date              DateTime @default(now())
+  averageScore      Float    @default(0)
+  questionsAnswered Int      @default(0)
+  topicsSummary     String   @default("")
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+}
+
+// AI questions generated per user per calendar month ("YYYY-MM"), for plan limits
+model AiUsage {
+  id        Int    @id @default(autoincrement())
+  userId    String
+  period    String
+  questions Int    @default(0)
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, period])
+}
+
+// ──────────────── AUTHENTICATION & PROFILE ────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          String    @default("user") // user, admin
+  plan          String    @default("free") // free, pro, premium
+  planExpiresAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  accounts Account[]
+  sessions Session[]
+  profile  Profile?
+
+  topics            Topic[]
+  studyStats        StudyStats?
+  revisionHistories RevisionHistory[]
+  paymentRequests   PaymentRequest[]
+  aiUsage           AiUsage[]
+}
+
+model Profile {
+  id     String  @id @default(cuid())
+  userId String  @unique
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio    String?
+  avatar String?
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model PaymentRequest {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan          String
+  billingCycle  String    @default("monthly") // monthly, annual
+  amount        Int // in rupees, set by the server from the plan catalog
+  paymentMethod String // upi, bank
+  transactionId String
+  status        String    @default("pending") // pending, approved, rejected
+  createdAt     DateTime  @default(now())
+  reviewedAt    DateTime?
+  reviewedBy    String?
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+}
