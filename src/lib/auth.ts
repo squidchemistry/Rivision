@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import { prisma } from './prisma';
 import { rateLimit } from './rate-limit';
 
-export const MIN_PASSWORD_LENGTH = 8;
+export { MIN_PASSWORD_LENGTH } from './validation';
 
 export function normalizeEmail(email: string) {
     return email.trim().toLowerCase();

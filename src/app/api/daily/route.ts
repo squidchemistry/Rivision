@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getDueQuestions, getTodayRevisionCount, rankTopicsForPractice, SESSION_SIZE } from '@/lib/db';
-import { generateDailyQuestions, isRevisionMode } from '@/lib/ai';
+import { generateDailyQuestions } from '@/lib/ai';
 import { requireUser } from '@/lib/auth';
-import { ApiError, errorResponse } from '@/lib/http';
+import { errorResponse, parseQuery } from '@/lib/http';
 import { enforceRateLimit } from '@/lib/rate-limit';
 import { releaseQuota, reserveQuota, type Reservation } from '@/lib/usage';
+import { dailyQuery } from '@/lib/validation';
 
 // AI calls can take up to a minute; Vercel cuts functions off at this many seconds
 export const maxDuration = 60;
@@ -32,11 +33,7 @@ export async function GET(request: Request) {
         const user = await requireUser();
         if (user instanceof NextResponse) return user;
 
-        const { searchParams } = new URL(request.url);
-        const mode = searchParams.get('mode') || 'coding';
-        if (!isRevisionMode(mode)) throw new ApiError(400, 'mode must be coding or theory');
-        const selectedTopicIds = searchParams.get('topics')
-            ?.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0);
+        const { mode, topics: selectedTopicIds } = parseQuery(dailyQuery, request);
 
         const todayCount = await getTodayRevisionCount(user.id);
         const due = await getDueQuestions(user.id, mode, selectedTopicIds, SESSION_SIZE);

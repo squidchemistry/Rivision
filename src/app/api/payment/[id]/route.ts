@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAdmin } from '@/lib/auth';
-import { ApiError, errorResponse, readJson } from '@/lib/http';
+import { ApiError, errorResponse, parseBody, parseWith } from '@/lib/http';
 import { extendExpiry, isBillingCycle, isPlanId } from '@/lib/plans';
+import { paymentIdParam, paymentReviewBody } from '@/lib/validation';
 
 /** Admin approves or rejects a pending payment. Approval upgrades the plan for the paid period. */
 export async function PATCH(
@@ -13,11 +14,8 @@ export async function PATCH(
     const admin = await requireAdmin();
     if (admin instanceof NextResponse) return admin;
 
-    const { id } = await params;
-    const { status } = await readJson<{ status?: string }>(req);
-    if (status !== 'approved' && status !== 'rejected') {
-      throw new ApiError(400, 'Status must be approved or rejected');
-    }
+    const { id } = parseWith(paymentIdParam, await params);
+    const { status } = await parseBody(paymentReviewBody, req);
 
     const updated = await prisma.$transaction(async tx => {
       const existing = await tx.paymentRequest.findUnique({ where: { id } });
