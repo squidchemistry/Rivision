@@ -8,7 +8,7 @@ import { registerBody } from '@/lib/validation';
 export async function POST(request: Request) {
     try {
         // 5 sign-ups per IP per hour
-        enforceRateLimit(`register:${clientIp(request)}`, 5, 60 * 60_000);
+        await enforceRateLimit(`register:${clientIp(request)}`, 5, 60 * 60_000);
 
         const { email, password, name } = await parseBody(registerBody, request);
 

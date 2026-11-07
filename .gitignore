@@ -52,3 +52,5 @@ next-env.d.ts
 # local tooling and generated reports
 .claude/
 rivision-code-review.html
+test-results
+playwright-report

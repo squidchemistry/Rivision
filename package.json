@@ -14,7 +14,12 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "node --experimental-strip-types scripts/seed-dsa.ts",
     "admin:create": "node scripts/generate-admin.js",
-    "vercel-build": "prisma generate && prisma migrate deploy && next build"
+    "vercel-build": "prisma generate && prisma migrate deploy && next build",
+    "test": "vitest run",
+    "test:db": "cross-env TEST_DB=1 vitest run",
+    "test:e2e": "playwright test",
+    "db:seed-demo": "node --experimental-strip-types scripts/seed-demo.ts",
+    "demo": "cross-env DEMO_MODE=true LLM_PROVIDER=mock next dev"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",
@@ -41,6 +46,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
+    "cross-env": "^10.1.0",
     "dotenv": "^17.3.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",

@@ -1,34 +1,41 @@
 import { ApiError } from './http';
+import { prisma } from './prisma';
 
-// Fixed-window limiter kept in memory. It protects each server instance against bursts
-// (password guessing, sign-up spam, AI request floods). With several instances, each keeps its own
-// count; swap the store for Redis (e.g. Upstash) to share limits. Plan quotas are enforced in the
-// database separately (see usage.ts), so they hold across instances.
-type Bucket = { count: number; resetAt: number };
-const buckets = new Map<string, Bucket>();
-const MAX_KEYS = 10_000;
+// Fixed-window limiter stored in Postgres, so the count is shared by every server instance.
+// One atomic upsert per check: it starts a new window when the old one has expired, otherwise
+// increments, and returns the result in the same statement (no read-then-write race).
+// The window clock is the database's, so instances with skewed clocks agree.
+// If the database call fails the check fails open: a limiter outage must not take sign-in down.
+export type RateLimitResult = { ok: boolean; retryAfterSec: number };
 
-export function rateLimit(key: string, limit: number, windowMs: number): { ok: boolean; retryAfterSec: number } {
-    const now = Date.now();
-    let bucket = buckets.get(key);
-    if (!bucket || bucket.resetAt <= now) {
-        if (buckets.size >= MAX_KEYS) {
-            for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);
-            if (buckets.size >= MAX_KEYS) buckets.clear();
-        }
-        bucket = { count: 0, resetAt: now + windowMs };
-        buckets.set(key, bucket);
+export async function rateLimit(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
+    try {
+        const rows = await prisma.$queryRaw<{ count: number; retry: number }[]>`
+            INSERT INTO "RateLimit" ("key", "count", "resetAt")
+            VALUES (${key}, 1, now() + (${windowMs} * interval '1 millisecond'))
+            ON CONFLICT ("key") DO UPDATE SET
+                "count"   = CASE WHEN "RateLimit"."resetAt" <= now() THEN 1 ELSE "RateLimit"."count" + 1 END,
+                "resetAt" = CASE WHEN "RateLimit"."resetAt" <= now() THEN now() + (${windowMs} * interval '1 millisecond') ELSE "RateLimit"."resetAt" END
+            RETURNING "count", CEIL(EXTRACT(EPOCH FROM ("resetAt" - now())))::int AS "retry"`;
+        const { count, retry } = rows[0];
+        return { ok: count <= limit, retryAfterSec: Math.max(1, retry) };
+    } catch (error) {
+        console.error('[rate-limit] store unavailable, allowing request', error);
+        return { ok: true, retryAfterSec: 0 };
     }
-    bucket.count++;
-    return { ok: bucket.count <= limit, retryAfterSec: Math.ceil((bucket.resetAt - now) / 1000) };
 }
 
 /** Throws a 429 ApiError when the limit is exceeded */
-export function enforceRateLimit(key: string, limit: number, windowMs: number) {
-    const { ok, retryAfterSec } = rateLimit(key, limit, windowMs);
+export async function enforceRateLimit(key: string, limit: number, windowMs: number) {
+    const { ok, retryAfterSec } = await rateLimit(key, limit, windowMs);
     if (!ok) {
         throw new ApiError(429, `Too many requests. Try again in ${retryAfterSec} seconds.`, 'rate_limited');
     }
+}
+
+/** Deletes expired windows. Cheap to call occasionally (e.g. from a cron or after sign-ups). */
+export async function pruneRateLimits() {
+    return prisma.$executeRaw`DELETE FROM "RateLimit" WHERE "resetAt" <= now()`;
 }
 
 /** Best-effort client IP from proxy headers */

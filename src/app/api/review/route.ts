@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     try {
         const user = await requireUser();
         if (user instanceof NextResponse) return user;
-        enforceRateLimit(`review:${user.id}`, 30, 60 * 60_000);
+        await enforceRateLimit(`review:${user.id}`, 30, 60 * 60_000);
 
         const { mode, answers } = await parseBody(reviewBody, request);
 

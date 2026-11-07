@@ -57,12 +57,13 @@ export async function GET(request: Request) {
             }
 
             if (topics.length > 0) {
-                enforceRateLimit(`ai:${user.id}`, 30, 60 * 60_000);
+                await enforceRateLimit(`ai:${user.id}`, 30, 60 * 60_000);
                 try {
                     reservation = await reserveQuota(user.id, needed, true);
                 } catch (error) {
                     // Out of AI questions: still serve the due reviews if there are any
                     if (questions.length === 0) throw error;
+                    console.warn('[daily] serving due reviews only:', (error as Error).message);
                 }
 
                 if (reservation) {

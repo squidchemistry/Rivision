@@ -11,7 +11,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireUser();
     if (user instanceof NextResponse) return user;
-    enforceRateLimit(`payment:${user.id}`, 10, 60 * 60_000);
+    await enforceRateLimit(`payment:${user.id}`, 10, 60 * 60_000);
 
     const {
       plan,

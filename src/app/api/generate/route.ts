@@ -18,7 +18,7 @@ export async function POST(request: Request) {
     try {
         const user = await requireUser();
         if (user instanceof NextResponse) return user;
-        enforceRateLimit(`ai:${user.id}`, 30, 60 * 60_000);
+        await enforceRateLimit(`ai:${user.id}`, 30, 60 * 60_000);
 
         let formData: FormData;
         try {

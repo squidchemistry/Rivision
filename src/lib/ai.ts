@@ -12,11 +12,13 @@ export function isRevisionMode(value: unknown): value is RevisionMode {
 
 /**
  * "groq" calls Groq; "mock" returns deterministic, offline results (tests, local runs and demos without a key).
- * LLM_PROVIDER picks one explicitly; otherwise Groq is used when GROQ_API_KEY is set, and the mock when it isn't.
+ * LLM_PROVIDER picks one explicitly; otherwise the mock is used in DEMO_MODE or without GROQ_API_KEY, and Groq when a key is set.
  */
-export function llmProvider(env: NodeJS.ProcessEnv = process.env): 'groq' | 'mock' {
+export function llmProvider(env: Record<string, string | undefined> = process.env): 'groq' | 'mock' {
     const configured = env.LLM_PROVIDER?.trim().toLowerCase();
     if (configured === 'mock' || configured === 'groq') return configured;
+    // Demo mode is deterministic and free even when a key happens to be configured
+    if (env.DEMO_MODE === 'true') return 'mock';
     return env.GROQ_API_KEY ? 'groq' : 'mock';
 }
 
@@ -26,7 +28,7 @@ export const DEFAULT_GROQ_MODELS = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b'];
  * Models to try, in order. GROQ_MODELS is a comma-separated list; GROQ_MODEL (one model) is put first.
  * Groq retires models, so the list lets a deploy switch models without a code change.
  */
-export function resolveModels(env: NodeJS.ProcessEnv = process.env): string[] {
+export function resolveModels(env: Record<string, string | undefined> = process.env): string[] {
     const listed = env.GROQ_MODELS?.split(',').map(m => m.trim()).filter(Boolean);
     return [...new Set([env.GROQ_MODEL?.trim(), ...(listed?.length ? listed : DEFAULT_GROQ_MODELS)].filter(Boolean) as string[])];
 }
