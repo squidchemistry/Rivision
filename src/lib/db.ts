@@ -3,16 +3,19 @@ import { addDays, dayKey, daysBetween, startOfToday } from './time';
 
 export const SESSION_SIZE = 5;
 export const PASS_SCORE = 60;
-export const MAX_TOPIC_CONTENT = 200_000;
+export { MAX_TOPIC_CONTENT } from './validation';
 const MAX_INTERVAL_DAYS = 180;
 
 // ──────────────── TOPICS ────────────────
 
-export async function getTopics(userId: string) {
+/** One page of the user's topics, newest first. `take` and `cursor` (the last id seen) page through them. */
+export async function getTopics(userId: string, page: { take?: number; cursor?: number } = {}) {
     return prisma.topic.findMany({
         where: { userId },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         include: { _count: { select: { questions: true } } },
+        take: page.take,
+        ...(page.cursor ? { cursor: { id: page.cursor }, skip: 1 } : {}),
     });
 }
 
@@ -34,17 +37,21 @@ export async function deleteTopic(id: number, userId: string) {
 
 // ──────────────── QUESTIONS ────────────────
 
-export async function getQuestions(userId: string, topicId?: string) {
+/** One page of the user's questions, newest first, optionally for one topic */
+export async function getQuestions(userId: string, page: { topicId?: number; take?: number; cursor?: number } = {}) {
     return prisma.question.findMany({
-        where: topicId ? { topicId: parseInt(topicId), topic: { userId } } : { topic: { userId } },
+        where: page.topicId ? { topicId: page.topicId, topic: { userId } } : { topic: { userId } },
         include: { topic: { select: { id: true, name: true } } },
         orderBy: { id: 'desc' },
+        take: page.take,
+        ...(page.cursor ? { cursor: { id: page.cursor }, skip: 1 } : {}),
     });
 }
 
+/** Adds a question to one of the user's topics; null when the topic isn't theirs */
 export async function createQuestion(userId: string, topicId: number, questionText: string, difficulty: number = 1) {
     const topic = await prisma.topic.findFirst({ where: { id: topicId, userId }, select: { id: true } });
-    if (!topic) throw new Error('Topic not found');
+    if (!topic) return null;
     return prisma.question.create({
         data: { topicId, questionText, difficulty, mode: 'theory' },
     });

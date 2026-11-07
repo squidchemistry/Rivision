@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import { prisma } from './prisma';
 import { rateLimit } from './rate-limit';
 
-export const MIN_PASSWORD_LENGTH = 8;
+export { MIN_PASSWORD_LENGTH } from './validation';
 
 export function normalizeEmail(email: string) {
     return email.trim().toLowerCase();
@@ -30,7 +30,7 @@ export const authOptions: NextAuthOptions = {
                 const email = normalizeEmail(credentials.email);
 
                 // Slow down password guessing: 10 attempts per email per 15 minutes
-                if (!rateLimit(`login:${email}`, 10, 15 * 60_000).ok) {
+                if (!(await rateLimit(`login:${email}`, 10, 15 * 60_000)).ok) {
                     throw new Error('Too many sign-in attempts. Try again in a few minutes.');
                 }
 

@@ -1,15 +1,18 @@
 import { NextResponse } from 'next/server';
 import { getTopics, createTopic } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
-import { ApiError, errorResponse, readJson } from '@/lib/http';
-import { MAX_TOPIC_CONTENT } from '@/lib/db';
+import { errorResponse, pageResponse, parseBody, parseQuery } from '@/lib/http';
+import { intPageQuery, topicCreateBody } from '@/lib/validation';
 
-export async function GET() {
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
     try {
         const user = await requireUser();
         if (user instanceof NextResponse) return user;
-        const topics = await getTopics(user.id);
-        return NextResponse.json(topics);
+        const { limit, cursor } = parseQuery(intPageQuery, request);
+        const topics = await getTopics(user.id, { take: limit + 1, cursor });
+        return pageResponse(topics, limit);
     } catch (error) {
         return errorResponse(error, 'topics');
     }
@@ -19,13 +22,8 @@ export async function POST(request: Request) {
     try {
         const user = await requireUser();
         if (user instanceof NextResponse) return user;
-        const { name, content } = await readJson(request);
-        const topicName = typeof name === 'string' ? name.trim() : '';
-        if (!topicName) throw new ApiError(400, 'Name is required');
-        if (topicName.length > 120) throw new ApiError(400, 'Name must be 120 characters or fewer');
-        const text = typeof content === 'string' ? content : '';
-        if (text.length > MAX_TOPIC_CONTENT) throw new ApiError(413, 'Study material is too long (200,000 characters max)');
-        const topic = await createTopic(topicName, text, user.id);
+        const { name, content } = await parseBody(topicCreateBody, request);
+        const topic = await createTopic(name, content, user.id);
         return NextResponse.json(topic, { status: 201 });
     } catch (error) {
         return errorResponse(error, 'topics');

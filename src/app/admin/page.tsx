@@ -37,7 +37,7 @@ interface User {
 }
 
 export default function AdminPanel() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
   const [tab, setTab] = useState<'payments' | 'users'>('payments');
   const [payments, setPayments] = useState<PaymentRequest[]>([]);
@@ -47,8 +47,13 @@ export default function AdminPanel() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    // Check if user is admin
-    if (session && session.user?.role !== 'admin') {
+    // The API enforces admin access; this just sends other visitors somewhere useful
+    if (status === 'loading') return;
+    if (status === 'unauthenticated') {
+      router.push('/auth');
+      return;
+    }
+    if (session?.user?.role !== 'admin') {
       router.push('/profile');
       return;
     }
@@ -58,7 +63,7 @@ export default function AdminPanel() {
     } else {
       fetchUsers();
     }
-  }, [session, filter, tab]);
+  }, [session, status, filter, tab]);
 
   const fetchPayments = async () => {
     setLoading(true);

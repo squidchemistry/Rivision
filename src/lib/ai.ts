@@ -1,5 +1,6 @@
 import Groq from 'groq-sdk';
 import { ApiError } from './http';
+import * as mock from './ai-mock';
 
 export type RevisionMode = 'coding' | 'theory';
 
@@ -7,25 +8,61 @@ export function isRevisionMode(value: unknown): value is RevisionMode {
     return value === 'coding' || value === 'theory';
 }
 
-// ─── GROQ CLIENT ───
+// ─── LLM PROVIDER ───
 
-// Tried in order; a model Groq has retired (404) is skipped for the life of the process.
-// Set GROQ_MODEL to put your preferred model first.
-const MODELS = [...new Set([process.env.GROQ_MODEL, 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'].filter(Boolean) as string[])];
+/**
+ * "groq" calls Groq; "mock" returns deterministic, offline results (tests, local runs and demos without a key).
+ * LLM_PROVIDER picks one explicitly; otherwise the mock is used in DEMO_MODE or without GROQ_API_KEY, and Groq when a key is set.
+ */
+export function llmProvider(env: Record<string, string | undefined> = process.env): 'groq' | 'mock' {
+    const configured = env.LLM_PROVIDER?.trim().toLowerCase();
+    if (configured === 'mock' || configured === 'groq') return configured;
+    // Demo mode is deterministic and free even when a key happens to be configured
+    if (env.DEMO_MODE === 'true') return 'mock';
+    return env.GROQ_API_KEY ? 'groq' : 'mock';
+}
+
+export const DEFAULT_GROQ_MODELS = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b'];
+
+/**
+ * Models to try, in order. GROQ_MODELS is a comma-separated list; GROQ_MODEL (one model) is put first.
+ * Groq retires models, so the list lets a deploy switch models without a code change.
+ */
+export function resolveModels(env: Record<string, string | undefined> = process.env): string[] {
+    const listed = env.GROQ_MODELS?.split(',').map(m => m.trim()).filter(Boolean);
+    return [...new Set([env.GROQ_MODEL?.trim(), ...(listed?.length ? listed : DEFAULT_GROQ_MODELS)].filter(Boolean) as string[])];
+}
+
+type ChatClient = {
+    chat: { completions: { create(args: { messages: { role: 'user'; content: string }[]; model: string; temperature: number }): Promise<{ choices: { message?: { content?: string | null } }[] }> } };
+};
+
+// A model Groq has retired is skipped for the life of the process
 const retiredModels = new Set<string>();
 let client: Groq | null = null;
 
 function getGroq() {
-    if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY is not set');
-    client ??= new Groq({ apiKey: process.env.GROQ_API_KEY, timeout: 90_000, maxRetries: 2 });
+    if (!process.env.GROQ_API_KEY) {
+        throw new ApiError(503, 'AI is not configured: set GROQ_API_KEY, or LLM_PROVIDER=mock for demo mode.', 'ai_unavailable');
+    }
+    client ??= new Groq({ apiKey: process.env.GROQ_API_KEY, timeout: 90_000, maxRetries: 1 });
     return client;
 }
 
-async function chat(prompt: string): Promise<string> {
-    for (const model of MODELS) {
-        if (retiredModels.has(model)) continue;
+function isRetired(status: number | undefined, message = '') {
+    return status === 404 || (status === 400 && /decommissioned|not supported|does not exist/i.test(message));
+}
+
+/**
+ * Sends the prompt to each model in turn until one answers.
+ * Retired models are remembered and skipped; rate limits (429), server errors and timeouts move on to the next model.
+ */
+export async function chatWithFallback(groq: ChatClient, models: string[], prompt: string, retired = retiredModels): Promise<string> {
+    let busy = false;
+    for (const model of models) {
+        if (retired.has(model)) continue;
         try {
-            const result = await getGroq().chat.completions.create({
+            const result = await groq.chat.completions.create({
                 messages: [{ role: 'user', content: prompt }],
                 model,
                 temperature: 0.7,
@@ -34,20 +71,24 @@ async function chat(prompt: string): Promise<string> {
         } catch (error) {
             const { status, message } = error as { status?: number; message?: string };
             console.error(`[ai] Groq request failed (${model})`, status, message);
-            if (status === 404) {
-                retiredModels.add(model);
+            if (isRetired(status, message)) {
+                retired.add(model);
                 continue;
             }
-            if (status === 429) {
-                throw new ApiError(503, 'The AI service is busy right now. Please try again in a minute.', 'ai_busy');
-            }
+            if (status === 429) busy = true;
+            if (status === undefined || status === 429 || status >= 500) continue;
             throw new ApiError(502, 'The AI service did not respond. Please try again.', 'ai_unavailable');
         }
     }
-    throw new ApiError(502, 'No AI model is available. Check GROQ_MODEL and your Groq account.', 'ai_unavailable');
+    if (busy) throw new ApiError(503, 'The AI service is busy right now. Please try again in a minute.', 'ai_busy');
+    throw new ApiError(502, 'No AI model is available right now. Check GROQ_MODELS and your Groq account.', 'ai_unavailable');
 }
 
-function parseJsonArray<T = unknown>(text: string): T[] {
+async function chat(prompt: string): Promise<string> {
+    return chatWithFallback(getGroq(), resolveModels(), prompt);
+}
+
+export function parseJsonArray<T = unknown>(text: string): T[] {
     try {
         const parsed = JSON.parse(text.trim());
         if (Array.isArray(parsed)) return parsed;
@@ -65,6 +106,7 @@ function parseJsonArray<T = unknown>(text: string): T[] {
 // ─── QUESTION GENERATION ───
 
 export async function generateQuestionsFromContent(content: string, difficulty: number, count: number = 5): Promise<string[]> {
+    if (llmProvider() === 'mock') return mock.generateQuestionsFromContent(content, difficulty, count);
     const diffLabel = difficulty === 1 ? 'Easy (LeetCode Easy)' : difficulty === 2 ? 'Medium (LeetCode Medium)' : 'Hard (LeetCode Hard / Codeforces Div2 C-D)';
 
     const prompt = `You are a competitive programming problem setter like those on LeetCode and Codeforces.
@@ -120,7 +162,7 @@ No markdown code blocks, no explanation outside the array.`;
 
 // ─── DAILY QUESTION GENERATION ───
 
-type TopicWithStats = {
+export type TopicWithStats = {
     id: number;
     name: string;
     content: string;
@@ -133,6 +175,7 @@ export async function generateDailyQuestions(
     count: number
 ): Promise<{ question: string; topicId: number }[]> {
     if (topics.length === 0 || count <= 0) return [];
+    if (llmProvider() === 'mock') return mock.generateDailyQuestions(topics, mode, count);
 
     // The highest-ranked topics, so the prompt stays a reasonable size
     const context = topics.slice(0, 8);
@@ -225,7 +268,7 @@ export type AnswerReport = {
     correctAnswer: string;
 };
 
-type QaPair = { question: string; answer: string; topicName: string; topicContent: string };
+export type QaPair = { question: string; answer: string; topicName: string; topicContent: string };
 
 /**
  * Grades answers with the AI. Returns one report per input, in the same order.
@@ -239,7 +282,9 @@ export async function evaluateAnswers(qaPairs: QaPair[], mode: RevisionMode = 'c
     );
     const toGrade = qaPairs.map((qa, i) => ({ ...qa, index: i })).filter((_, i) => reports[i] === null);
 
-    if (toGrade.length > 0) {
+    if (toGrade.length > 0 && llmProvider() === 'mock') {
+        for (const qa of toGrade) reports[qa.index] = mock.gradeAnswer(qa);
+    } else if (toGrade.length > 0) {
         const items = toGrade.map(qa => `
 Question index ${qa.index} (Topic: ${qa.topicName}):
 ${qa.question}

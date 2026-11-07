@@ -30,13 +30,13 @@ export function daysBetween(a: string, b: string): number {
 
 /** The instant today's calendar day started in APP_TIMEZONE */
 export function startOfToday(now = new Date()): Date {
-    // Step back hour by hour until the day key changes; at most 24 steps, no tz database needed
+    // Step back an hour at a time until we are in the previous day, then forward a minute at a time
+    // to the first minute of today. Handles :30 / :45 offsets with no tz database; at most ~84 steps.
     const today = dayKey(now);
     let t = new Date(now);
     t.setUTCMinutes(0, 0, 0);
-    while (dayKey(new Date(t.getTime() - 1)) === today) t = new Date(t.getTime() - 3_600_000);
-    // Refine to the minute for timezones with :30 / :45 offsets
-    while (dayKey(new Date(t.getTime() - 60_000)) === today) t = new Date(t.getTime() - 60_000);
+    while (dayKey(t) === today) t = new Date(t.getTime() - 3_600_000);
+    while (dayKey(t) !== today) t = new Date(t.getTime() + 60_000);
     return t;
 }
 

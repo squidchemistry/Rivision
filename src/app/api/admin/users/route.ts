@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAdmin } from '@/lib/auth';
+import { errorResponse, pageResponse, parseQuery } from '@/lib/http';
+import { pageQuery } from '@/lib/validation';
 
-export async function GET() {
+export const dynamic = 'force-dynamic';
+
+/** Admin only: users with their latest payment request, newest first */
+export async function GET(request: Request) {
   try {
     const admin = await requireAdmin();
     if (admin instanceof NextResponse) return admin;
+    const { limit, cursor } = parseQuery(pageQuery, request);
 
-    // Fetch all users with their latest payment request
     const users = await prisma.user.findMany({
       select: {
         id: true,
@@ -30,17 +35,13 @@ export async function GET() {
           take: 1,
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
 
-    return NextResponse.json(users);
+    return pageResponse(users, limit);
   } catch (error) {
-    console.error('Fetch admin users error:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch users' },
-      { status: 500 }
-    );
+    return errorResponse(error, 'admin-users');
   }
 }

@@ -156,3 +156,12 @@ model PaymentRequest {
   @@index([status, createdAt])
   @@index([userId, createdAt])
 }
+
+// Fixed-window request counters shared by all server instances (see src/lib/rate-limit.ts)
+model RateLimit {
+  key     String   @id
+  count   Int
+  resetAt DateTime
+
+  @@index([resetAt])
+}

@@ -1,39 +1,27 @@
 import { NextResponse } from 'next/server';
-import { evaluateAnswers, isRevisionMode } from '@/lib/ai';
-import { nextSchedule, recordRevision, SESSION_SIZE } from '@/lib/db';
+import { evaluateAnswers } from '@/lib/ai';
+import { nextSchedule, recordRevision } from '@/lib/db';
 import { prisma } from '@/lib/prisma';
 import { requireUser } from '@/lib/auth';
-import { ApiError, errorResponse, readJson } from '@/lib/http';
+import { ApiError, errorResponse, parseBody } from '@/lib/http';
 import { enforceRateLimit } from '@/lib/rate-limit';
+import { reviewBody } from '@/lib/validation';
 
 // AI calls can take up to a minute; Vercel cuts functions off at this many seconds
 export const maxDuration = 60;
-
-const MAX_ANSWER_CHARS = 20_000;
-
-type AnswerInput = { questionId: number; answer: string };
 
 /** Grades a session's answers, reschedules each question, and records the session for streaks */
 export async function POST(request: Request) {
     try {
         const user = await requireUser();
         if (user instanceof NextResponse) return user;
-        enforceRateLimit(`review:${user.id}`, 30, 60 * 60_000);
+        await enforceRateLimit(`review:${user.id}`, 30, 60 * 60_000);
 
-        const body = await readJson<{ answers?: unknown; mode?: unknown }>(request);
-        const mode = body.mode ?? 'coding';
-        if (!isRevisionMode(mode)) throw new ApiError(400, 'mode must be coding or theory');
-        if (!Array.isArray(body.answers) || body.answers.length === 0) throw new ApiError(400, 'No answers provided');
-        if (body.answers.length > SESSION_SIZE * 2) throw new ApiError(400, 'Too many answers in one session');
-
-        const answers: AnswerInput[] = body.answers.map((a: { questionId?: unknown; answer?: unknown }) => ({
-            questionId: Number(a?.questionId),
-            answer: typeof a?.answer === 'string' ? a.answer.slice(0, MAX_ANSWER_CHARS) : '',
-        }));
+        const { mode, answers } = await parseBody(reviewBody, request);
 
         // Only questions in this user's topics
         const questions = await prisma.question.findMany({
-            where: { id: { in: answers.map(a => a.questionId).filter(Number.isInteger) }, topic: { userId: user.id } },
+            where: { id: { in: answers.map(a => a.questionId) }, topic: { userId: user.id } },
             include: { topic: { select: { name: true, content: true } } },
         });
         const byId = new Map(questions.map(q => [q.id, q]));

@@ -3,15 +3,13 @@ import { prisma } from '@/lib/prisma';
 import { generateQuestionsFromContent } from '@/lib/ai';
 import { extractTextFromFile, extractTextFromUrl, MAX_FILES, MAX_URLS } from '@/lib/extract';
 import { requireUser } from '@/lib/auth';
-import { ApiError, errorResponse } from '@/lib/http';
+import { ApiError, errorResponse, parseWith } from '@/lib/http';
 import { enforceRateLimit } from '@/lib/rate-limit';
 import { releaseQuota, reserveQuota, type Reservation } from '@/lib/usage';
+import { generateForm, MAX_TOPIC_CONTENT } from '@/lib/validation';
 
 // AI calls can take up to a minute; Vercel cuts functions off at this many seconds
 export const maxDuration = 60;
-
-const MAX_COUNT = 20;
-const MAX_CONTENT_CHARS = 200_000;
 
 /** Creates a topic from pasted text, files and links, then generates AI coding problems for it */
 export async function POST(request: Request) {
@@ -20,7 +18,7 @@ export async function POST(request: Request) {
     try {
         const user = await requireUser();
         if (user instanceof NextResponse) return user;
-        enforceRateLimit(`ai:${user.id}`, 30, 60 * 60_000);
+        await enforceRateLimit(`ai:${user.id}`, 30, 60 * 60_000);
 
         let formData: FormData;
         try {
@@ -29,28 +27,26 @@ export async function POST(request: Request) {
             throw new ApiError(400, 'Expected a form upload');
         }
 
-        const name = String(formData.get('name') || '').trim().slice(0, 120);
-        if (!name) throw new ApiError(400, 'Topic name is required');
-
-        const difficulty = parseInt(String(formData.get('difficulty') || '1'));
-        if (![1, 2, 3].includes(difficulty)) throw new ApiError(400, 'Difficulty must be 1, 2 or 3');
-        const count = parseInt(String(formData.get('count') || '5'));
-        if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT) {
-            throw new ApiError(400, `Number of questions must be between 1 and ${MAX_COUNT}`);
-        }
+        // Text fields are validated like a JSON body; empty fields fall back to their defaults
+        const fields = Object.fromEntries(
+            ['name', 'difficulty', 'count', 'content', 'urls'].flatMap(key => {
+                const value = formData.get(key);
+                return typeof value === 'string' && value !== '' ? [[key, value]] : [];
+            })
+        );
+        const { name, difficulty, count, content, urls } = parseWith(generateForm, fields);
 
         const files = formData.getAll('file').filter((v): v is File => v instanceof File && v.size > 0);
         if (files.length > MAX_FILES) throw new ApiError(400, `Upload at most ${MAX_FILES} files at a time`);
-        const urls = String(formData.get('urls') || '').split('\n').map(u => u.trim()).filter(Boolean);
         if (urls.length > MAX_URLS) throw new ApiError(400, `Add at most ${MAX_URLS} links at a time`);
 
         // Check the plan allows this many questions before doing any expensive work
         reservation = await reserveQuota(user.id, count);
 
-        const parts = [String(formData.get('content') || '')];
+        const parts = [content];
         for (const file of files) parts.push(await extractTextFromFile(file));
         for (const url of urls) parts.push(await extractTextFromUrl(url));
-        const fullContent = parts.join('\n\n').trim().slice(0, MAX_CONTENT_CHARS);
+        const fullContent = parts.join('\n\n').trim().slice(0, MAX_TOPIC_CONTENT);
         if (!fullContent) throw new ApiError(400, 'No content provided (text, files, or URLs)');
 
         const questions = await generateQuestionsFromContent(fullContent, difficulty, count);
